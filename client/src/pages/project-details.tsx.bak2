@@ -1,0 +1,1178 @@
+import { useState } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { useRoute, useLocation } from "wouter";
+import { Sidebar } from "@/components/layout/sidebar";
+import { Header } from "@/components/layout/header";
+import { Button } from "@/components/ui/button";
+import { CreateItemModal } from "@/components/modals/create-item-modal";
+import { EditItemModal } from "@/components/modals/edit-item-modal";
+import { DeleteItemModal } from "@/components/modals/delete-item-modal";
+import { KanbanBoard } from "@/components/ui/kanban-board";
+import { TimelineView } from "@/components/ui/timeline-view";
+import { Badge } from "@/components/ui/badge";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
+import { apiRequest } from "@/lib/queryClient";
+import { useModal } from "@/hooks/use-modal";
+import { useToast } from "@/hooks/use-toast";
+import { 
+  ArrowLeft, 
+  Filter, 
+  Plus, 
+  Layers, 
+  ListFilter,
+  ArrowDownUp,
+  Edit,
+  Trash2,
+  ChevronLeft,
+  ChevronRight,
+  ChevronDown,
+  Users,
+  UserPlus,
+  UserMinus
+} from "lucide-react";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { queryClient } from "@/lib/queryClient";
+
+export default function ProjectDetails() {
+  const [_, params] = useRoute('/projects/:id');
+  const [_path, navigate] = useLocation();
+  const projectId = params?.id ? parseInt(params.id) : 0;
+  
+  // Function to handle navigation with null check
+  const goToProjects = () => {
+    if (navigate) navigate('/projects');
+  };
+  
+  // Archive project handler
+  const handleArchiveProject = async () => {
+    // Don't proceed if project ID is invalid
+    if (!projectId) return;
+    
+    try {
+      // Call API to archive project
+      const response = await apiRequest(
+        'PATCH',
+        `/api/projects/${projectId}`, 
+        { status: "ARCHIVED" }
+      );
+      
+      if (response.ok) {
+        // Show success message
+        toast({
+          title: "Project archived",
+          description: "The project has been archived successfully",
+        });
+        
+        // Redirect to projects page
+        goToProjects();
+        
+        // Invalidate cache
+        await queryClient.invalidateQueries({ queryKey: ['/api/projects'] });
+      } else {
+        const errorData = await response.json();
+        toast({
+          title: "Error",
+          description: errorData.message || "Failed to archive project",
+          variant: "destructive",
+        });
+      }
+    } catch (error) {
+      console.error("Error archiving project:", error);
+      toast({
+        title: "Error",
+        description: "An unexpected error occurred while archiving the project",
+        variant: "destructive",
+      });
+    }
+  };
+  
+  // Delete project handler
+  const handleDeleteProject = async () => {
+    // Don't proceed if project ID is invalid
+    if (!projectId) return;
+    
+    // Confirm with user before deleting
+    if (project?.name && !window.confirm(`Are you sure you want to delete ${project.name}? This action cannot be undone.`)) {
+      return;
+    }
+    
+    try {
+      // Call API to delete project
+      const response = await apiRequest(
+        'DELETE',
+        `/api/projects/${projectId}`
+      );
+      
+      if (response.ok) {
+        // Show success message
+        toast({
+          title: "Project deleted",
+          description: "The project has been deleted successfully",
+        });
+        
+        // Redirect to projects page
+        goToProjects();
+        
+        // Invalidate cache
+        await queryClient.invalidateQueries({ queryKey: ['/api/projects'] });
+      } else {
+        const errorData = await response.json();
+        toast({
+          title: "Error",
+          description: errorData.message || "Failed to delete project",
+          variant: "destructive",
+        });
+      }
+    } catch (error) {
+      console.error("Error deleting project:", error);
+      toast({
+        title: "Error",
+        description: "An unexpected error occurred while deleting the project",
+        variant: "destructive",
+      });
+    }
+  };
+  
+  // For Overview sub-tabs
+  const [activeTab, setActiveTab] = useState<'timeline' | 'kanban'>('timeline');
+  const [timeUnit, setTimeUnit] = useState<'Quarter' | 'Month' | 'Week'>('Quarter');
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [filterType, setFilterType] = useState<string[]>([]);
+  const [filterFeature, setFilterFeature] = useState<number | undefined>(undefined);
+  
+  const { 
+    modalType, 
+    isOpen, 
+    openModal, 
+    closeModal,
+    modalProps 
+  } = useModal();
+  
+  const { toast } = useToast();
+  
+  // Fetch current user
+  const { data: currentUser = {} } = useQuery({
+    queryKey: ['/api/users/64'], // Using existing user ID 64 for demo
+  });
+  
+  // Fetch project details
+  const { data: project = {} } = useQuery({
+    queryKey: [`/api/projects/${projectId}`],
+  });
+  
+  // Fetch teams
+  const { data: teams = [] } = useQuery({
+    queryKey: ['/api/teams'],
+  });
+  
+  // Fetch all projects for sidebar
+  const { data: projects = [] } = useQuery({
+    queryKey: ['/api/projects'],
+  });
+  
+  // Fetch work items for this project
+  const { data: workItems = [], refetch: refetchWorkItems } = useQuery({
+    queryKey: [`/api/projects/${projectId}/work-items`],
+  });
+  
+  // Fetch all users
+  const { data: users = [] } = useQuery({
+    queryKey: ['/api/users'],
+  });
+  
+  const features = Array.isArray(workItems) ? workItems.filter(item => item.type === 'FEATURE') : [];
+  
+  // State for expanded items in the hierarchical view
+  const [expandedItems, setExpandedItems] = useState<Record<number, boolean>>({});
+  
+  const handleWorkItemsUpdate = () => {
+    refetchWorkItems();
+  };
+  
+  // Toggle expansion state of an item
+  const toggleItemExpansion = (itemId: number) => {
+    setExpandedItems(prev => ({
+      ...prev,
+      [itemId]: !prev[itemId]
+    }));
+  };
+  
+  // Organize work items in a hierarchical structure: Epics > Features > Stories > Tasks/Bugs
+  const organizeWorkItemsHierarchically = () => {
+    if (!Array.isArray(workItems)) return [];
+    
+    // Extract all items by type
+    const epics = workItems.filter(item => item.type === 'EPIC');
+    const features = workItems.filter(item => item.type === 'FEATURE');
+    const stories = workItems.filter(item => item.type === 'STORY');
+    const tasksAndBugs = workItems.filter(item => item.type === 'TASK' || item.type === 'BUG');
+    
+    // Create the hierarchy
+    const hierarchicalItems = [];
+    
+    // Process epics
+    for (const epic of epics) {
+      hierarchicalItems.push({
+        ...epic,
+        level: 0,
+        hasChildren: features.some(f => f.parentId === epic.id)
+      });
+      
+      // If this epic is expanded, add its features
+      if (expandedItems[epic.id]) {
+        const epicFeatures = features.filter(f => f.parentId === epic.id);
+        for (const feature of epicFeatures) {
+          hierarchicalItems.push({
+            ...feature,
+            level: 1,
+            hasChildren: stories.some(s => s.parentId === feature.id)
+          });
+          
+          // If this feature is expanded, add its stories
+          if (expandedItems[feature.id]) {
+            const featureStories = stories.filter(s => s.parentId === feature.id);
+            for (const story of featureStories) {
+              hierarchicalItems.push({
+                ...story,
+                level: 2,
+                hasChildren: tasksAndBugs.some(tb => tb.parentId === story.id)
+              });
+              
+              // If this story is expanded, add its tasks and bugs
+              if (expandedItems[story.id]) {
+                const storyTasksAndBugs = tasksAndBugs.filter(tb => tb.parentId === story.id);
+                for (const taskOrBug of storyTasksAndBugs) {
+                  hierarchicalItems.push({
+                    ...taskOrBug,
+                    level: 3,
+                    hasChildren: false
+                  });
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+    
+    // Add orphaned features (those without epics)
+    const orphanedFeatures = features.filter(f => !f.parentId || !epics.some(e => e.id === f.parentId));
+    for (const feature of orphanedFeatures) {
+      hierarchicalItems.push({
+        ...feature,
+        level: 0,
+        hasChildren: stories.some(s => s.parentId === feature.id)
+      });
+      
+      // If this feature is expanded, add its stories
+      if (expandedItems[feature.id]) {
+        const featureStories = stories.filter(s => s.parentId === feature.id);
+        for (const story of featureStories) {
+          hierarchicalItems.push({
+            ...story,
+            level: 1,
+            hasChildren: tasksAndBugs.some(tb => tb.parentId === story.id)
+          });
+          
+          // If this story is expanded, add its tasks and bugs
+          if (expandedItems[story.id]) {
+            const storyTasksAndBugs = tasksAndBugs.filter(tb => tb.parentId === story.id);
+            for (const taskOrBug of storyTasksAndBugs) {
+              hierarchicalItems.push({
+                ...taskOrBug,
+                level: 2,
+                hasChildren: false
+              });
+            }
+          }
+        }
+      }
+    }
+    
+    // Add orphaned stories
+    const orphanedStories = stories.filter(s => !s.parentId || !features.some(f => f.id === s.parentId));
+    for (const story of orphanedStories) {
+      hierarchicalItems.push({
+        ...story,
+        level: 0,
+        hasChildren: tasksAndBugs.some(tb => tb.parentId === story.id)
+      });
+      
+      // If this story is expanded, add its tasks and bugs
+      if (expandedItems[story.id]) {
+        const storyTasksAndBugs = tasksAndBugs.filter(tb => tb.parentId === story.id);
+        for (const taskOrBug of storyTasksAndBugs) {
+          hierarchicalItems.push({
+            ...taskOrBug,
+            level: 1,
+            hasChildren: false
+          });
+        }
+      }
+    }
+    
+    // Add orphaned tasks and bugs
+    const orphanedTasksAndBugs = tasksAndBugs.filter(tb => !tb.parentId || !stories.some(s => s.id === tb.parentId));
+    for (const taskOrBug of orphanedTasksAndBugs) {
+      hierarchicalItems.push({
+        ...taskOrBug,
+        level: 0,
+        hasChildren: false
+      });
+    }
+    
+    return hierarchicalItems;
+  };
+  
+  const getFilterTypesOptions = () => {
+    return [
+      { value: 'STORY', label: 'Stories' },
+      { value: 'TASK', label: 'Tasks' },
+      { value: 'BUG', label: 'Bugs' },
+    ];
+  };
+  
+  const handleFilterTypeChange = (value: string) => {
+    if (value === "ALL") {
+      setFilterType([]);
+    } else {
+      const currentFilters = [...filterType];
+      if (currentFilters.includes(value)) {
+        setFilterType(currentFilters.filter(t => t !== value));
+      } else {
+        setFilterType([...currentFilters, value]);
+      }
+    }
+  };
+  
+  return (
+    <div className="flex h-screen overflow-hidden">
+      {/* Sidebar */}
+      <Sidebar 
+        user={currentUser}
+        teams={teams}
+        projects={projects}
+        onCreateTeam={() => openModal("createTeam")}
+        onCreateProject={() => openModal("createProject")}
+      />
+      
+      {/* Mobile menu toggle */}
+      <div className="md:hidden fixed bottom-4 right-4 z-10">
+        <Button
+          className="rounded-full shadow-lg p-3 h-12 w-12"
+          onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
+        >
+          <Layers className="h-5 w-5" />
+        </Button>
+      </div>
+      
+      {/* Main content */}
+      <div className="flex-1 flex flex-col overflow-hidden">
+        <Header 
+          currentProject={project}
+          projects={projects}
+          onMobileMenuToggle={() => setMobileMenuOpen(!mobileMenuOpen)} 
+        />
+        
+        <main className="flex-1 overflow-auto">
+          {/* Project navigation */}
+          <div className="bg-white border-b border-neutral-200">
+            <div className="flex items-center px-6 py-3">
+              <Button variant="ghost" className="mr-6 font-medium" asChild>
+                <a href="/projects">
+                  <ArrowLeft className="mr-1 h-4 w-4" />
+                  Back to projects
+                </a>
+              </Button>
+              
+              <nav className="flex space-x-6 overflow-x-auto">
+                <a 
+                  href="#" 
+                  onClick={(e) => { e.preventDefault(); setProjectView('overview'); }}
+                  className={`border-b-2 ${
+                    projectView === 'overview'
+                      ? 'border-primary text-primary' 
+                      : 'border-transparent text-neutral-600 hover:text-neutral-900'
+                  } font-medium py-3`}
+                >
+                  Overview
+                </a>
+                <a 
+                  href="#" 
+                  onClick={(e) => { e.preventDefault(); setProjectView('board'); }}
+                  className={`border-b-2 ${
+                    projectView === 'board'
+                      ? 'border-primary text-primary' 
+                      : 'border-transparent text-neutral-600 hover:text-neutral-900'
+                  } font-medium py-3`}
+                >
+                  Board
+                </a>
+                <a 
+                  href="#" 
+                  onClick={(e) => { e.preventDefault(); setProjectView('list'); }}
+                  className={`border-b-2 ${
+                    projectView === 'list'
+                      ? 'border-primary text-primary' 
+                      : 'border-transparent text-neutral-600 hover:text-neutral-900'
+                  } font-medium py-3`}
+                >
+                  List
+                </a>
+                <a 
+                  href="#" 
+                  onClick={(e) => { e.preventDefault(); setProjectView('calendar'); }}
+                  className={`border-b-2 ${
+                    projectView === 'calendar'
+                      ? 'border-primary text-primary' 
+                      : 'border-transparent text-neutral-600 hover:text-neutral-900'
+                  } font-medium py-3`}
+                >
+                  Calendar
+                </a>
+                <a 
+                  href="#" 
+                  onClick={(e) => { e.preventDefault(); setProjectView('settings'); }}
+                  className={`border-b-2 ${
+                    projectView === 'settings'
+                      ? 'border-primary text-primary' 
+                      : 'border-transparent text-neutral-600 hover:text-neutral-900'
+                  } font-medium py-3`}
+                >
+                  Settings
+                </a>
+              </nav>
+            </div>
+          </div>
+          
+          {/* Project content */}
+          <div className="p-6">
+            <div className="mb-6 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+              <div>
+                <h1 className="text-2xl font-semibold mb-1">{project?.name || 'Loading project...'}</h1>
+                <p className="text-neutral-600">{project?.description || 'No description provided'}</p>
+              </div>
+              {/* Only show Filter and Create Item buttons on specific tabs */}
+              {projectView !== 'overview' && projectView !== 'calendar' && projectView !== 'settings' && (
+                <div className="flex space-x-3">
+                  <Button variant="outline">
+                    <Filter className="mr-2 h-4 w-4" />
+                    <span>Filter</span>
+                  </Button>
+                  <Button onClick={() => openModal("createItem")}>
+                    <Plus className="mr-2 h-4 w-4" />
+                    <span>Create Item</span>
+                  </Button>
+                </div>
+              )}
+            </div>
+            
+            {/* OVERVIEW VIEW */}
+            {projectView === 'overview' && (
+              <>
+                {/* Tab navigation */}
+                <div className="mb-6 border-b border-neutral-200">
+                  <div className="flex space-x-6">
+                    <button 
+                      onClick={() => setActiveTab('timeline')}
+                      className={`py-3 px-1 font-medium border-b-2 ${
+                        activeTab === 'timeline' 
+                          ? 'text-primary border-primary' 
+                          : 'text-neutral-600 border-transparent'
+                      }`}
+                    >
+                      Timeline View
+                    </button>
+                    <button 
+                      onClick={() => setActiveTab('kanban')}
+                      className={`py-3 px-1 font-medium border-b-2 ${
+                        activeTab === 'kanban' 
+                          ? 'text-primary border-primary' 
+                          : 'text-neutral-600 border-transparent'
+                      }`}
+                    >
+                      Kanban View
+                    </button>
+                  </div>
+                </div>
+                
+                {/* Tab content */}
+                <div className={activeTab === 'timeline' ? 'block' : 'hidden'}>
+                  <TimelineView
+                    projectId={projectId}
+                    workItems={workItems}
+                    timeUnit={timeUnit}
+                    onTimeUnitChange={setTimeUnit}
+                  />
+                </div>
+                
+                <div className={activeTab === 'kanban' ? 'block' : 'hidden'}>
+                  <div className="bg-white rounded-lg shadow-sm border border-neutral-200 p-6 mb-6">
+                    <div className="flex items-center justify-between mb-6">
+                      <h2 className="text-lg font-semibold">Stories, Tasks & Bugs</h2>
+                      <div className="flex items-center space-x-3">
+                        <div className="relative">
+                          <Select
+                            value={filterType.length === 0 ? "ALL" : filterType[0]}
+                            onValueChange={handleFilterTypeChange}
+                          >
+                            <SelectTrigger className="bg-white border border-neutral-300 text-neutral-700 rounded-md w-[150px]">
+                              <SelectValue placeholder="Show All" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="ALL">Show All</SelectItem>
+                              <SelectItem value="STORY">Stories Only</SelectItem>
+                              <SelectItem value="TASK">Tasks Only</SelectItem>
+                              <SelectItem value="BUG">Bugs Only</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </div>
+                        
+                        <div className="relative">
+                          <Select
+                            value={filterFeature ? filterFeature.toString() : "ALL"}
+                            onValueChange={(value) => setFilterFeature(value === "ALL" ? undefined : parseInt(value))}
+                          >
+                            <SelectTrigger className="bg-white border border-neutral-300 text-neutral-700 rounded-md w-[180px]">
+                              <SelectValue placeholder="All Features" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="ALL">All Features</SelectItem>
+                              {features.map(feature => (
+                                <SelectItem key={feature.id} value={feature.id.toString()}>
+                                  {feature.title}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
+                      </div>
+                    </div>
+                    
+                    <KanbanBoard
+                      projectId={projectId}
+                      workItems={workItems}
+                      users={users}
+                      onWorkItemsUpdate={handleWorkItemsUpdate}
+                      filter={{
+                        type: filterType.length > 0 ? filterType : undefined,
+                        featureId: filterFeature
+                      }}
+                    />
+                  </div>
+                </div>
+              </>
+            )}
+            
+            {/* BOARD VIEW */}
+            {projectView === 'board' && (
+              <div className="bg-white rounded-lg shadow-sm border border-neutral-200 p-6 mb-6">
+                <div className="flex items-center justify-between mb-6">
+                  <h2 className="text-lg font-semibold">Advanced Kanban Board</h2>
+                  <div className="flex items-center space-x-3">
+                    <div className="relative">
+                      <Select
+                        value={filterType.length === 0 ? "ALL" : filterType[0]}
+                        onValueChange={handleFilterTypeChange}
+                      >
+                        <SelectTrigger className="bg-white border border-neutral-300 text-neutral-700 rounded-md w-[150px]">
+                          <SelectValue placeholder="Filter Type" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="ALL">All Types</SelectItem>
+                          <SelectItem value="EPIC">Epics Only</SelectItem>
+                          <SelectItem value="FEATURE">Features Only</SelectItem>
+                          <SelectItem value="STORY">Stories Only</SelectItem>
+                          <SelectItem value="TASK">Tasks Only</SelectItem>
+                          <SelectItem value="BUG">Bugs Only</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    
+                    <Select
+                      value={"ALL"}
+                      onValueChange={() => {}}
+                    >
+                      <SelectTrigger className="bg-white border border-neutral-300 text-neutral-700 rounded-md w-[150px]">
+                        <SelectValue placeholder="Filter Assignee" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="ALL">All Assignees</SelectItem>
+                        {Array.isArray(users) && users.map((user: any) => (
+                          <SelectItem key={user.id} value={user.id.toString()}>
+                            {user.fullName || 'User'}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+                
+                <KanbanBoard
+                  projectId={projectId}
+                  workItems={workItems}
+                  users={users}
+                  onWorkItemsUpdate={handleWorkItemsUpdate}
+                  filter={{
+                    type: filterType.length > 0 ? filterType : undefined,
+                    featureId: undefined
+                  }}
+                  showAllTypes={true}
+                />
+              </div>
+            )}
+            
+            {/* LIST VIEW */}
+            {projectView === 'list' && (
+              <div className="bg-white rounded-lg shadow-sm border border-neutral-200 p-6 mb-6">
+                <div className="flex items-center justify-between mb-6">
+                  <h2 className="text-lg font-semibold">Work Items List</h2>
+                  <div className="flex items-center space-x-3">
+                    <Select
+                      value={filterType.length === 0 ? "ALL" : filterType[0]}
+                      onValueChange={handleFilterTypeChange}
+                    >
+                      <SelectTrigger className="bg-white border border-neutral-300 text-neutral-700 rounded-md w-[150px]">
+                        <SelectValue placeholder="Filter Type" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="ALL">All Types</SelectItem>
+                        <SelectItem value="EPIC">Epics Only</SelectItem>
+                        <SelectItem value="FEATURE">Features Only</SelectItem>
+                        <SelectItem value="STORY">Stories Only</SelectItem>
+                        <SelectItem value="TASK">Tasks Only</SelectItem>
+                        <SelectItem value="BUG">Bugs Only</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    
+                    <Button variant="outline" size="sm">
+                      <ArrowDownUp className="h-4 w-4 mr-2" />
+                      Sort
+                    </Button>
+                  </div>
+                </div>
+                
+                <div className="border rounded-md overflow-hidden">
+                  <table className="min-w-full divide-y divide-neutral-200">
+                    <thead className="bg-neutral-50">
+                      <tr>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-neutral-500 uppercase tracking-wider">ID</th>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-neutral-500 uppercase tracking-wider">Title</th>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-neutral-500 uppercase tracking-wider">Type</th>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-neutral-500 uppercase tracking-wider">Status</th>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-neutral-500 uppercase tracking-wider">Assignee</th>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-neutral-500 uppercase tracking-wider">Priority</th>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-neutral-500 uppercase tracking-wider">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody className="bg-white divide-y divide-neutral-200">
+                      {organizeWorkItemsHierarchically().map((item: any) => {
+                        const assignee = Array.isArray(users) ? users.find((u: any) => u.id === item.assigneeId) : null;
+                        
+                        // Choose a different color for each level of indentation
+                        const typeColors = {
+                          'EPIC': 'bg-purple-100 text-purple-800',
+                          'FEATURE': 'bg-blue-100 text-blue-800',
+                          'STORY': 'bg-green-100 text-green-800',
+                          'TASK': 'bg-neutral-100 text-neutral-800',
+                          'BUG': 'bg-red-100 text-red-800'
+                        };
+                        
+                        // Calculate indentation size based on hierarchy level
+                        const indentSize = item.level * 16; // 16px per level
+                        
+                        return (
+                          <tr key={item.id} className="hover:bg-neutral-50">
+                            <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-primary">{item.externalId}</td>
+                            <td className="py-4 whitespace-nowrap text-sm text-neutral-900">
+                              <div className="flex items-center" style={{ paddingLeft: `${indentSize}px` }}>
+                                {item.hasChildren && (
+                                  <button 
+                                    className="mr-2 focus:outline-none" 
+                                    onClick={() => toggleItemExpansion(item.id)}
+                                  >
+                                    {expandedItems[item.id] ? (
+                                      <ChevronDown className="h-4 w-4 text-neutral-500" />
+                                    ) : (
+                                      <ChevronRight className="h-4 w-4 text-neutral-500" />
+                                    )}
+                                  </button>
+                                )}
+                                {!item.hasChildren && item.level > 0 && (
+                                  <div className="w-6"></div>
+                                )}
+                                <span className="truncate max-w-[250px]">{item.title}</span>
+                              </div>
+                            </td>
+                            <td className="px-6 py-4 whitespace-nowrap text-sm text-neutral-500">
+                              <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${typeColors[item.type] || 'bg-blue-100 text-blue-800'}`}>
+                                {item.type}
+                              </span>
+                            </td>
+                            <td className="px-6 py-4 whitespace-nowrap text-sm text-neutral-500">
+                              <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
+                                item.status === 'TODO' 
+                                  ? 'bg-neutral-100 text-neutral-800' 
+                                  : item.status === 'IN_PROGRESS' 
+                                    ? 'bg-amber-100 text-amber-800' 
+                                    : 'bg-green-100 text-green-800'
+                              }`}>
+                                {item.status === 'TODO' ? 'To Do' : item.status === 'IN_PROGRESS' ? 'In Progress' : 'Done'}
+                              </span>
+                            </td>
+                            <td className="px-6 py-4 whitespace-nowrap text-sm text-neutral-500">
+                              {assignee ? (
+                                <div className="flex items-center">
+                                  <div className="h-6 w-6 rounded-full bg-primary/20 flex items-center justify-center text-xs font-medium text-primary mr-2">
+                                    {assignee.fullName ? assignee.fullName.split(' ').map((n: string) => n[0]).join('') : 'U'}
+                                  </div>
+                                  <span>{assignee.fullName || 'User'}</span>
+                                </div>
+                              ) : 'Unassigned'}
+                            </td>
+                            <td className="px-6 py-4 whitespace-nowrap text-sm text-neutral-500">
+                              <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
+                                item.priority === 'LOW' 
+                                  ? 'bg-green-100 text-green-800' 
+                                  : item.priority === 'MEDIUM' 
+                                    ? 'bg-blue-100 text-blue-800' 
+                                    : item.priority === 'HIGH' 
+                                      ? 'bg-amber-100 text-amber-800' 
+                                      : 'bg-red-100 text-red-800'
+                              }`}>
+                                {item.priority || 'None'}
+                              </span>
+                            </td>
+                            <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
+                              <div className="flex space-x-2">
+                                <Dialog>
+                                  <DialogTrigger asChild>
+                                    <button className="text-blue-600 hover:text-blue-900">
+                                      <Edit className="h-4 w-4" />
+                                    </button>
+                                  </DialogTrigger>
+                                  <DialogTrigger asChild>
+                                    <button id={`close-edit-dialog-${item.id}`} className="hidden">
+                                      Close
+                                    </button>
+                                  </DialogTrigger>
+                                  <DialogContent className="sm:max-w-[550px]">
+                                    <DialogHeader>
+                                      <DialogTitle className="text-lg font-semibold">Edit {item.externalId}: {item.title}</DialogTitle>
+                                    </DialogHeader>
+                                    <div className="p-4 space-y-4">
+                                      <div className="grid grid-cols-1 gap-3">
+                                        <div className="space-y-2">
+                                          <label className="text-sm font-medium">Title</label>
+                                          <Input defaultValue={item.title} id={`edit-title-${item.id}`} />
+                                        </div>
+                                        
+                                        <div className="space-y-2">
+                                          <label className="text-sm font-medium">Description</label>
+                                          <Textarea 
+                                            defaultValue={item.description || ""} 
+                                            id={`edit-description-${item.id}`} 
+                                            rows={3}
+                                          />
+                                        </div>
+                                      </div>
+                                      
+                                      <div className="grid grid-cols-2 gap-3">
+                                        <div className="space-y-2">
+                                          <label className="text-sm font-medium">Status</label>
+                                          <Select defaultValue={item.status}>
+                                            <SelectTrigger id={`edit-status-${item.id}`}>
+                                              <SelectValue />
+                                            </SelectTrigger>
+                                            <SelectContent>
+                                              <SelectItem value="TODO">To Do</SelectItem>
+                                              <SelectItem value="IN_PROGRESS">In Progress</SelectItem>
+                                              <SelectItem value="DONE">Done</SelectItem>
+                                            </SelectContent>
+                                          </Select>
+                                        </div>
+                                        
+                                        <div className="space-y-2">
+                                          <label className="text-sm font-medium">Priority</label>
+                                          <Select defaultValue={item.priority || "MEDIUM"}>
+                                            <SelectTrigger id={`edit-priority-${item.id}`}>
+                                              <SelectValue />
+                                            </SelectTrigger>
+                                            <SelectContent>
+                                              <SelectItem value="LOW">Low</SelectItem>
+                                              <SelectItem value="MEDIUM">Medium</SelectItem>
+                                              <SelectItem value="HIGH">High</SelectItem>
+                                              <SelectItem value="CRITICAL">Critical</SelectItem>
+                                            </SelectContent>
+                                          </Select>
+                                        </div>
+                                      </div>
+                                      
+                                      <div className="grid grid-cols-2 gap-3">
+                                        <div className="space-y-2">
+                                          <label className="text-sm font-medium">Assignee</label>
+                                          <Select defaultValue={item.assigneeId?.toString() || "unassigned"}>
+                                            <SelectTrigger id={`edit-assignee-${item.id}`}>
+                                              <SelectValue />
+                                            </SelectTrigger>
+                                            <SelectContent>
+                                              <SelectItem value="unassigned">Unassigned</SelectItem>
+                                              {Array.isArray(users) && users.map(user => (
+                                                <SelectItem key={user.id} value={user.id.toString()}>
+                                                  {user.username || user.email}
+                                                </SelectItem>
+                                              ))}
+                                            </SelectContent>
+                                          </Select>
+                                        </div>
+                                        
+                                        <div className="space-y-2">
+                                          <label className="text-sm font-medium">Estimate</label>
+                                          <Input 
+                                            defaultValue={item.estimate || ""} 
+                                            id={`edit-estimate-${item.id}`} 
+                                            placeholder={item.type === "STORY" ? "Story points" : "Hours"}
+                                          />
+                                        </div>
+                                      </div>
+                                    </div>
+                                    <DialogFooter className="px-4 pb-4">
+                                      <Button variant="outline" type="button" onClick={() => document.getElementById(`close-edit-dialog-${item.id}`)?.click()}>Cancel</Button>
+                                      <Button
+                                        onClick={async () => {
+                                          try {
+                                            const title = (document.getElementById(`edit-title-${item.id}`) as HTMLInputElement)?.value;
+                                            const description = (document.getElementById(`edit-description-${item.id}`) as HTMLTextAreaElement)?.value;
+                                            const status = (document.getElementById(`edit-status-${item.id}`) as HTMLSelectElement)?.value;
+                                            const priority = (document.getElementById(`edit-priority-${item.id}`) as HTMLSelectElement)?.value;
+                                            const assigneeId = (document.getElementById(`edit-assignee-${item.id}`) as HTMLSelectElement)?.value;
+                                            const estimate = (document.getElementById(`edit-estimate-${item.id}`) as HTMLInputElement)?.value;
+                                            
+                                            const updateData = {
+                                              title,
+                                              description: description || null,
+                                              status,
+                                              priority: priority || null,
+                                              assigneeId: assigneeId && assigneeId !== "unassigned" ? parseInt(assigneeId) : null,
+                                              estimate: estimate || null
+                                            };
+                                            
+                                            await apiRequest("PATCH", `/api/work-items/${item.id}`, updateData);
+                                            toast({
+                                              title: "Work item updated",
+                                              description: `${item.externalId}: ${title} has been updated.`,
+                                            });
+                                            document.getElementById(`close-edit-dialog-${item.id}`)?.click();
+                                            refetchWorkItems();
+                                          } catch (error) {
+                                            console.error("Error updating work item:", error);
+                                            toast({
+                                              title: "Error",
+                                              description: "Failed to update the work item. Please try again.",
+                                              variant: "destructive",
+                                            });
+                                          }
+                                        }}
+                                      >
+                                        Save Changes
+                                      </Button>
+                                    </DialogFooter>
+                                  </DialogContent>
+                                </Dialog>
+                                
+                                <Dialog>
+                                  <DialogTrigger asChild>
+                                    <button className="text-red-600 hover:text-red-900 ml-2">
+                                      <Trash2 className="h-4 w-4" />
+                                    </button>
+                                  </DialogTrigger>
+                                  <DialogTrigger asChild>
+                                    <button id={`close-delete-dialog-${item.id}`} className="hidden">
+                                      Close
+                                    </button>
+                                  </DialogTrigger>
+                                  <DialogContent>
+                                    <DialogHeader>
+                                      <DialogTitle className="text-lg font-semibold">Delete Work Item</DialogTitle>
+                                      <DialogDescription>
+                                        Are you sure you want to delete this work item? This action cannot be undone.
+                                      </DialogDescription>
+                                    </DialogHeader>
+                                    <div className="flex justify-end space-x-2 mt-4">
+                                      <Button variant="outline" onClick={() => document.getElementById(`close-delete-dialog-${item.id}`)?.click()}>Cancel</Button>
+                                      <Button 
+                                        variant="destructive"
+                                        onClick={async () => {
+                                          try {
+                                            await apiRequest("DELETE", `/api/work-items/${item.id}`, null);
+                                            toast({
+                                              title: "Work item deleted",
+                                              description: `${item.externalId}: ${item.title} has been deleted.`,
+                                            });
+                                            document.getElementById(`close-delete-dialog-${item.id}`)?.click();
+                                            refetchWorkItems();
+                                          } catch (error) {
+                                            console.error("Error deleting work item:", error);
+                                            toast({
+                                              title: "Error",
+                                              description: "Failed to delete the work item. Please try again.",
+                                              variant: "destructive",
+                                            });
+                                          }
+                                        }}
+                                      >
+                                        Delete
+                                      </Button>
+                                    </div>
+                                  </DialogContent>
+                                </Dialog>
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+                
+                <div className="flex items-center justify-between mt-6">
+                  <div className="text-sm text-neutral-500">
+                    Showing <span className="font-medium">{Array.isArray(workItems) ? workItems.length : 0}</span> work items
+                  </div>
+                  <div className="flex space-x-2">
+                    <Button variant="outline" size="sm" disabled>Previous</Button>
+                    <Button variant="outline" size="sm" disabled>Next</Button>
+                  </div>
+                </div>
+              </div>
+            )}
+            
+            {/* CALENDAR VIEW */}
+            {projectView === 'calendar' && (
+              <div className="bg-white rounded-lg shadow-sm border border-neutral-200 p-6 mb-6">
+                <div className="flex items-center justify-between mb-6">
+                  <h2 className="text-lg font-semibold">Project Calendar</h2>
+                  <div className="flex items-center space-x-3">
+                    <Button variant="outline" size="sm">
+                      <ChevronLeft className="h-4 w-4" />
+                    </Button>
+                    <div className="text-sm font-medium">May 2025</div>
+                    <Button variant="outline" size="sm">
+                      <ChevronRight className="h-4 w-4" />
+                    </Button>
+                    <Select defaultValue="month">
+                      <SelectTrigger className="bg-white border border-neutral-300 text-neutral-700 rounded-md w-[100px]">
+                        <SelectValue placeholder="View" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="month">Month</SelectItem>
+                        <SelectItem value="week">Week</SelectItem>
+                        <SelectItem value="day">Day</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+                
+                <div className="border rounded-md overflow-hidden">
+                  <div className="grid grid-cols-7 gap-px bg-neutral-200">
+                    {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((day) => (
+                      <div key={day} className="bg-neutral-50 py-2 text-center text-sm font-medium text-neutral-500">
+                        {day}
+                      </div>
+                    ))}
+                    
+                    {Array.from({ length: 35 }).map((_, index) => {
+                      const day = index - 3 + 1; // Assuming May 2025 starts on Thursday (index 4)
+                      const isCurrentMonth = day > 0 && day <= 31;
+                      
+                      return (
+                        <div 
+                          key={index} 
+                          className={`bg-white min-h-[120px] p-2 ${isCurrentMonth ? '' : 'text-neutral-300'}`}
+                        >
+                          <div className="text-right text-sm mb-1">{isCurrentMonth ? day : (day <= 0 ? day + 30 : day - 31)}</div>
+                          
+                          {isCurrentMonth && day === 15 && (
+                            <div className="bg-blue-100 text-blue-800 p-1 mb-1 rounded text-xs">
+                              Feature Implementation Due
+                            </div>
+                          )}
+                          
+                          {isCurrentMonth && day === 20 && (
+                            <div className="bg-green-100 text-green-800 p-1 mb-1 rounded text-xs">
+                              Sprint Review
+                            </div>
+                          )}
+                          
+                          {isCurrentMonth && day === 25 && (
+                            <div className="bg-red-100 text-red-800 p-1 mb-1 rounded text-xs">
+                              Critical Bug Fix Deadline
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              </div>
+            )}
+            
+            {/* SETTINGS VIEW */}
+            {projectView === 'settings' && (
+              <div className="bg-white rounded-lg shadow-sm border border-neutral-200 p-6 mb-6">
+                <h2 className="text-lg font-semibold mb-6">Project Settings</h2>
+                
+                <div className="space-y-6">
+                  <div>
+                    <h3 className="text-md font-medium mb-4">General Information</h3>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium text-neutral-700">Project Name</label>
+                        <input 
+                          type="text" 
+                          className="w-full p-2 border border-neutral-300 rounded-md"
+                          value={project?.name || ''}
+                          readOnly
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium text-neutral-700">Project Key</label>
+                        <input 
+                          type="text" 
+                          className="w-full p-2 border border-neutral-300 rounded-md"
+                          value={project?.key || ''}
+                          readOnly
+                        />
+                      </div>
+                      <div className="space-y-2 md:col-span-2">
+                        <label className="text-sm font-medium text-neutral-700">Description</label>
+                        <textarea 
+                          className="w-full p-2 border border-neutral-300 rounded-md"
+                          value={project?.description || ''}
+                          readOnly
+                          rows={3}
+                        />
+                      </div>
+                    </div>
+                  </div>
+                  
+                  <div className="pt-6 border-t border-neutral-200">
+                    <h3 className="text-md font-medium mb-4">Project Timeline</h3>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium text-neutral-700">Start Date</label>
+                        <input 
+                          type="date" 
+                          className="w-full p-2 border border-neutral-300 rounded-md"
+                          value={project?.startDate ? new Date(project.startDate).toISOString().split('T')[0] : ''}
+                          readOnly
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium text-neutral-700">Target End Date</label>
+                        <input 
+                          type="date" 
+                          className="w-full p-2 border border-neutral-300 rounded-md"
+                          value={project?.targetDate ? new Date(project.targetDate).toISOString().split('T')[0] : ''}
+                          readOnly
+                        />
+                      </div>
+                    </div>
+                  </div>
+                  
+                  <div className="pt-6 border-t border-neutral-200">
+                    <h3 className="text-md font-medium mb-4">Team & Permissions</h3>
+                    <div className="space-y-4">
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium text-neutral-700">Associated Team</label>
+                        <div className="flex items-center space-x-2">
+                          <span className="px-3 py-2 bg-neutral-100 rounded-md text-sm flex-1">
+                            {teams.find((t: any) => t.id === project?.teamId)?.name || 'No team assigned'}
+                          </span>
+                          <Button variant="outline" size="sm">
+                            <Users className="h-4 w-4 mr-2" />
+                            Change Team
+                          </Button>
+                        </div>
+                      </div>
+                      
+                      <div className="space-y-2">
+                        <div className="flex items-center justify-between">
+                          <label className="text-sm font-medium text-neutral-700">Project Members</label>
+                          <Button variant="outline" size="sm">
+                            <UserPlus className="h-4 w-4 mr-2" />
+                            Add Member
+                          </Button>
+                        </div>
+                        
+                        <div className="border rounded-md overflow-hidden">
+                          <table className="min-w-full divide-y divide-neutral-200">
+                            <thead className="bg-neutral-50">
+                              <tr>
+                                <th className="px-6 py-3 text-left text-xs font-medium text-neutral-500 uppercase tracking-wider">Name</th>
+                                <th className="px-6 py-3 text-left text-xs font-medium text-neutral-500 uppercase tracking-wider">Role</th>
+                                <th className="px-6 py-3 text-left text-xs font-medium text-neutral-500 uppercase tracking-wider">Actions</th>
+                              </tr>
+                            </thead>
+                            <tbody className="bg-white divide-y divide-neutral-200">
+                              {Array.isArray(users) && users.slice(0, 3).map((user: any) => (
+                                <tr key={user.id}>
+                                  <td className="px-6 py-4 whitespace-nowrap">
+                                    <div className="flex items-center">
+                                      <div className="flex-shrink-0 h-8 w-8 rounded-full bg-primary/20 flex items-center justify-center text-xs font-medium text-primary">
+                                        {user.fullName ? user.fullName.split(' ').map((n: string) => n[0]).join('') : 'U'}
+                                      </div>
+                                      <div className="ml-4">
+                                        <div className="text-sm font-medium text-neutral-900">{user.fullName || 'User'}</div>
+                                        <div className="text-sm text-neutral-500">{user.email || 'No email'}</div>
+                                      </div>
+                                    </div>
+                                  </td>
+                                  <td className="px-6 py-4 whitespace-nowrap">
+                                    <select className="text-sm rounded-md border-neutral-300">
+                                      <option value="admin">Admin</option>
+                                      <option value="member" selected={user.id !== 1}>Member</option>
+                                      <option value="viewer">Viewer</option>
+                                    </select>
+                                  </td>
+                                  <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
+                                    <button className="text-red-600 hover:text-red-900 ml-4">
+                                      <UserMinus className="h-4 w-4" />
+                                    </button>
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                  
+                  <div className="pt-6 border-t border-neutral-200">
+                    <h3 className="text-md font-medium mb-4 text-red-600">Danger Zone</h3>
+                    <div className="space-y-4">
+                      <div className="flex items-center justify-between p-4 border border-red-200 rounded-md bg-red-50">
+                        <div>
+                          <h4 className="text-sm font-medium text-red-800">Archive Project</h4>
+                          <p className="text-sm text-red-600">Archive this project to hide it from active views.</p>
+                        </div>
+                        <Button 
+                          variant="outline" 
+                          className="border-red-300 text-red-600 hover:bg-red-50 hover:text-red-700"
+                          onClick={handleArchiveProject}
+                        >
+                          Archive Project
+                        </Button>
+                      </div>
+                      
+                      <div className="flex items-center justify-between p-4 border border-red-200 rounded-md bg-red-50">
+                        <div>
+                          <h4 className="text-sm font-medium text-red-800">Delete Project</h4>
+                          <p className="text-sm text-red-600">This action cannot be undone. All data will be permanently deleted.</p>
+                        </div>
+                        <Button 
+                          variant="outline" 
+                          className="border-red-300 text-red-600 hover:bg-red-50 hover:text-red-700"

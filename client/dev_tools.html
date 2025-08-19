@@ -1,0 +1,243 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Project Management - Developer Tools</title>
+  <style>
+    body {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif;
+      max-width: 800px;
+      margin: 0 auto;
+      padding: 20px;
+      line-height: 1.6;
+      color: #333;
+    }
+    h1 {
+      color: #6366f1;
+      margin-bottom: 30px;
+      padding-bottom: 10px;
+      border-bottom: 2px solid #e5e7eb;
+    }
+    .card {
+      background-color: #fff;
+      border-radius: 8px;
+      box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+      padding: 20px;
+      margin-bottom: 20px;
+    }
+    h2 {
+      color: #4f46e5;
+      margin-top: 0;
+    }
+    button {
+      background-color: #4f46e5;
+      color: white;
+      border: none;
+      padding: 10px 15px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-weight: 500;
+      transition: background-color 0.2s;
+    }
+    button:hover {
+      background-color: #4338ca;
+    }
+    button.danger {
+      background-color: #ef4444;
+    }
+    button.danger:hover {
+      background-color: #dc2626;
+    }
+    pre {
+      background-color: #f9fafb;
+      border-radius: 4px;
+      padding: 15px;
+      overflow: auto;
+      font-family: 'Menlo', 'Monaco', 'Courier New', monospace;
+      font-size: 14px;
+      line-height: 1.5;
+      margin-top: 15px;
+    }
+    .stats {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 15px;
+      margin-top: 20px;
+    }
+    .stat-item {
+      background-color: #f9fafb;
+      border-radius: 6px;
+      padding: 15px;
+      text-align: center;
+    }
+    .stat-count {
+      font-size: 24px;
+      font-weight: 600;
+      color: #4f46e5;
+    }
+    .stat-label {
+      font-size: 14px;
+      color: #6b7280;
+    }
+    .warning {
+      background-color: #fef3c7;
+      border-left: 4px solid #f59e0b;
+      padding: 10px 15px;
+      margin-bottom: 20px;
+      border-radius: 4px;
+    }
+    #loading {
+      display: none;
+      margin-top: 10px;
+      color: #6b7280;
+    }
+  </style>
+</head>
+<body>
+  <h1>Project Management - Developer Tools</h1>
+  
+  <div class="warning">
+    <strong>Warning:</strong> These tools are for development purposes only. Use with caution as they can permanently modify or delete data.
+  </div>
+  
+  <div class="card">
+    <h2>Data Status</h2>
+    <p>View the current status of your database including counts of all entity types.</p>
+    <button id="checkStatus">Check Current Status</button>
+    <div id="loading">Loading...</div>
+    <div id="dataStatus"></div>
+  </div>
+  
+  <div class="card">
+    <h2>Reset Data</h2>
+    <p>This will clear all existing data and generate fresh sample data with the latest templates. This action cannot be undone.</p>
+    <div style="display: flex; align-items: center; gap: 15px; margin-bottom: 10px;">
+      <label for="resetCount">Number of work items:</label>
+      <input type="number" id="resetCount" value="150" min="10" max="500" style="width: 80px; padding: 8px; border-radius: 4px; border: 1px solid #d1d5db;">
+    </div>
+    <button id="resetData" class="danger">Reset All Data</button>
+    <pre id="resetResult"></pre>
+  </div>
+  
+  <div class="card">
+    <h2>Generate Additional Items</h2>
+    <p>Add more work items to the existing data without clearing anything. Uses the fixed generator with guaranteed unique IDs.</p>
+    <div style="display: flex; align-items: center; gap: 15px; margin-bottom: 10px;">
+      <label for="generateCount">Number of items to add:</label>
+      <input type="number" id="generateCount" value="100" min="10" max="500" style="width: 80px; padding: 8px; border-radius: 4px; border: 1px solid #d1d5db;">
+    </div>
+    <button id="generateItems">Generate Items</button>
+    <pre id="generateResult"></pre>
+  </div>
+
+  <script>
+    document.getElementById('checkStatus').addEventListener('click', async () => {
+      const loading = document.getElementById('loading');
+      const statusContainer = document.getElementById('dataStatus');
+      
+      loading.style.display = 'block';
+      statusContainer.innerHTML = '';
+      
+      try {
+        const response = await fetch('/api/dev/data-status');
+        if (!response.ok) {
+          throw new Error(`Error: ${response.status} ${response.statusText}`);
+        }
+        
+        const data = await response.json();
+        console.log(data);
+        
+        let html = '<div class="stats">';
+        html += `<div class="stat-item"><div class="stat-count">${data.users}</div><div class="stat-label">Users</div></div>`;
+        html += `<div class="stat-item"><div class="stat-count">${data.teams}</div><div class="stat-label">Teams</div></div>`;
+        html += `<div class="stat-item"><div class="stat-count">${data.projects}</div><div class="stat-label">Projects</div></div>`;
+        html += '</div>';
+        
+        html += '<h3>Work Items</h3>';
+        html += '<div class="stats">';
+        html += `<div class="stat-item"><div class="stat-count">${data.workItems.total}</div><div class="stat-label">Total Items</div></div>`;
+        html += `<div class="stat-item"><div class="stat-count">${data.workItems.epics}</div><div class="stat-label">Epics</div></div>`;
+        html += `<div class="stat-item"><div class="stat-count">${data.workItems.features}</div><div class="stat-label">Features</div></div>`;
+        html += `<div class="stat-item"><div class="stat-count">${data.workItems.stories}</div><div class="stat-label">Stories</div></div>`;
+        html += `<div class="stat-item"><div class="stat-count">${data.workItems.tasks}</div><div class="stat-label">Tasks</div></div>`;
+        html += `<div class="stat-item"><div class="stat-count">${data.workItems.bugs}</div><div class="stat-label">Bugs</div></div>`;
+        html += '</div>';
+        
+        statusContainer.innerHTML = html;
+      } catch (error) {
+        statusContainer.innerHTML = `<pre style="color: #ef4444;">${error.message}</pre>`;
+      } finally {
+        loading.style.display = 'none';
+      }
+    });
+    
+    document.getElementById('resetData').addEventListener('click', async () => {
+      if (!confirm('Are you sure you want to reset all data? This action cannot be undone.')) {
+        return;
+      }
+      
+      const resetResult = document.getElementById('resetResult');
+      const count = document.getElementById('resetCount').value || 150;
+      
+      resetResult.textContent = 'Resetting data, please wait...';
+      
+      try {
+        const response = await fetch('/api/dev/reset-data', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({ count: parseInt(count) })
+        });
+        
+        if (!response.ok) {
+          throw new Error(`Error: ${response.status} ${response.statusText}`);
+        }
+        
+        const result = await response.json();
+        resetResult.textContent = JSON.stringify(result, null, 2);
+        
+        // Auto-refresh status after reset
+        document.getElementById('checkStatus').click();
+      } catch (error) {
+        resetResult.textContent = `Error: ${error.message}`;
+      }
+    });
+    
+    document.getElementById('generateItems').addEventListener('click', async () => {
+      const generateResult = document.getElementById('generateResult');
+      const count = document.getElementById('generateCount').value || 100;
+      
+      generateResult.textContent = 'Generating items, please wait...';
+      
+      try {
+        const response = await fetch('/api/dev/generate-items', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({ count: parseInt(count) })
+        });
+        
+        if (!response.ok) {
+          throw new Error(`Error: ${response.status} ${response.statusText}`);
+        }
+        
+        const result = await response.json();
+        generateResult.textContent = JSON.stringify(result, null, 2);
+        
+        // Auto-refresh status after generating items
+        document.getElementById('checkStatus').click();
+      } catch (error) {
+        generateResult.textContent = `Error: ${error.message}`;
+      }
+    });
+    
+    // Check status on page load
+    document.addEventListener('DOMContentLoaded', () => {
+      document.getElementById('checkStatus').click();
+    });
+  </script>
+</body>
+</html>
